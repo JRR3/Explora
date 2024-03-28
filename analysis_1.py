@@ -23,6 +23,18 @@ class Explora:
         self.A.var["mt"] = self.A.var_names.str.startswith(
             "MT-")
 
+    def replace_treatment_labels(self):
+
+        def fun(txt):
+            if txt == "control":
+                return "C"
+            elif txt == "treated":
+                return "T"
+            else:
+                raise ValueError("Unexpected state.")
+
+        self.A.obs["state"] = self.A.obs["state"].apply(fun)
+
     def filter_cells_and_genes(self):
         sc.pp.filter_cells(self.A, min_counts=200)
         sc.pp.filter_genes(self.A, min_cells=1)
@@ -30,8 +42,10 @@ class Explora:
     def remove_high_mitochondrial_counts(self):
         self.A = self.A[self.A.obs.pct_counts_mt < 1, :]
     
-    def compute_stats(self):
-        sc.pp.calculate_qc_metrics(self.A,
+    def compute_stats(self, adata=None):
+        if adata is None:
+            adata = self.A
+        sc.pp.calculate_qc_metrics(adata,
                                    qc_vars=["mt"],
                                    percent_top=None,
                                    log1p=False,
@@ -45,9 +59,28 @@ class Explora:
         U = 1.5 * iqr
         self.A = self.A[self.A.obs.total_counts < U, :]
 
-    def plot_stats(self):
+    def remove_high_total_counts_by_state(self):
+        mask_C = self.A.obs.state == "C"
+        mask_T = ~mask_C
+        x = self.A[mask_C].obs["total_counts"]
+        q25, q75 = np.percentile(x, [25,75])
+        iqr = q75 - q25
+        U = 1.5 * iqr
+        mask_C &= self.A.obs.total_counts < U
 
-        #Total counts
+        x = self.A[mask_T].obs["total_counts"]
+        q25, q75 = np.percentile(x, [25,75])
+        iqr = q75 - q25
+        U = 1.5 * iqr
+        mask_T &= self.A.obs.total_counts < U
+
+        mask = mask_C | mask_T
+
+        self.A = self.A[mask]
+
+    def plot_stats(self, label = ""):
+
+        #Total counts (per cell)
         fig = px.box(self.A.obs,
                 #y="state",
                 x="total_counts",
@@ -55,9 +88,10 @@ class Explora:
                 log_x=True,
         )
         fig.update_layout(xaxis_title="Total counts")
-        fig.write_html("i_box_total_counts.html")
+        txt = "i_box_total_counts_per_cell" + label + ".html"
+        fig.write_html(txt)
 
-        #Number of genes
+        #Number of genes (per cell)
         fig = px.box(self.A.obs,
                 #y="state",
                 x="n_genes_by_counts",
@@ -65,9 +99,10 @@ class Explora:
                 log_x=True,
         )
         fig.update_layout(xaxis_title="# of genes")
-        fig.write_html("i_box_n_genes.html")
+        txt = "i_box_n_genes" + label + ".html"
+        fig.write_html(txt)
 
-        #Percent of mitochondrial counts
+        #Percent of mitochondrial counts (per cell)
         fig = px.box(self.A.obs,
                 #y="state",
                 x="pct_counts_mt",
@@ -76,9 +111,11 @@ class Explora:
         )
         txt = "Mitochondrial counts (%)"
         fig.update_layout(xaxis_title=txt)
-        fig.write_html("i_box_pct_mito.html")
 
-        #
+        txt = "i_box_pct_mito" + label + ".html"
+        fig.write_html(txt)
+
+        #MT% vs Total counts
         fig = px.scatter(self.A.obs,
                 x="total_counts",
                 y="pct_counts_mt",
@@ -90,11 +127,14 @@ class Explora:
         y_txt = "Mitochondrial counts (%)"
         fig.update_layout(xaxis_title=x_txt,
                           yaxis_title=y_txt)
-        fig.write_html("i_pct_mito_vs_total_counts.html")
+
+        txt = "i_pct_mito_vs_total_counts" + label + ".html"
+        fig.write_html(txt)
+
 
     def partition_into_states(self):
-        self.C = self.A[self.A.obs.state == "control"].copy()
-        self.T = self.A[self.A.obs.state == "treated"].copy()
+        self.C = self.A[self.A.obs.state == "C"].copy()
+        self.T = self.A[self.A.obs.state == "T"].copy()
         print(self.C)
         print(self.T)
 
@@ -115,8 +155,8 @@ class Explora:
     def plot_dispersion(self):
         c_disp = self.compute_dispersion(self.C)
         t_disp = self.compute_dispersion(self.T)
-        c_labels = ["control"] * len(c_disp[0])
-        t_labels = ["treated"] * len(t_disp[0])
+        c_labels = ["C"] * len(c_disp[0])
+        t_labels = ["T"] * len(t_disp[0])
         state = c_labels + t_labels
         g_mean = np.concatenate((c_disp[0], t_disp[0]))
         g_var = np.concatenate((c_disp[1], t_disp[1]))
@@ -127,63 +167,94 @@ class Explora:
         #======================Control model
         x = c_disp[0]
         y = c_disp[1]
-        mask = x < 10
         mask = x < np.inf
         x = x[mask]
         y = y[mask]
-        y_c = y - x
-        # poly = PolynomialFeatures(degree=2,
-        #                           include_bias=True)
-        # poly_features = poly.fit_transform(x.reshape(-1,1))
+        y -= x
         X = x.reshape(-1,1) ** 2
         reg_model = LinearRegression(fit_intercept=False)
-        reg_model.fit(X, y_c)
-        poly_c = [0, 1, reg_model.coef_[0]]
-        # print(reg_model.coef_)
-        # print(reg_model.intercept_)
-        print(poly_c)
+        reg_model.fit(X, y)
+        poly_C = [0, 1, reg_model.coef_[0]]
+        print("C:", poly_C)
 
+        #===========Prediction
         a = x.min()
         b = x.max()
-        print("values:", a, b)
-        x_control = np.linspace(a,b,100)
-        y_control = polyval(x_control, poly_c)
-        mask = 0 < y_control
-        x_control = x_control[mask]
-        y_control = y_control[mask]
+        x_C = np.linspace(a,b,100)
+        y_C = polyval(x_C, poly_C)
+        mask = 0 < y_C
+        x_C = x_C[mask]
+        y_C = y_C[mask]
+
+        #======================Treatment model
+        x = t_disp[0]
+        y = t_disp[1]
+        mask = x < np.inf
+        x = x[mask]
+        y = y[mask]
+        y -= x
+        X = x.reshape(-1,1) ** 2
+        reg_model = LinearRegression(fit_intercept=False)
+        reg_model.fit(X, y)
+        poly_T = [0, 1, reg_model.coef_[0]]
+        print("T:", poly_T)
+
+        #===========Prediction
+        a = x.min()
+        b = x.max()
+        x_T = np.linspace(a,b,100)
+        y_T = polyval(x_T, poly_T)
+        mask = 0 < y_T
+        x_T = x_T[mask]
+        y_T = y_T[mask]
 
         fig = go.Figure()
 
 
         fig.add_trace(
-            go.Scattergl(
+            go.Scatter(
                 x=c_disp[0],
                 y=c_disp[1],
                 mode="markers",
-                name="control",
+                name="C",
                 ))
 
         fig.add_trace(
-            go.Scattergl(
+            go.Scatter(
                 x=t_disp[0],
                 y=t_disp[1],
                 mode="markers",
-                name="treated",
+                name="T",
                 ))
 
         fig.add_trace(
-            go.Scattergl(
-                x=x_control,
-                y=y_control,
+            go.Scatter(
+                x=x_C,
+                y=y_C,
                 mode="lines",
-                name="Reg. (control)",
+                name="a(C)=0.75",
+                line=dict(color="blue"),
+                ))
+
+        fig.add_trace(
+            go.Scatter(
+                x=x_T,
+                y=y_T,
+                mode="lines",
+                name="a(T)=2.38",
+                line=dict(color="red"),
                 ))
 
         fig.update_xaxes(type="log")
         fig.update_yaxes(type="log")
 
-        fig.write_html("i_var_vs_mean_for_genes.html")
-        return
+        fig.update_layout(
+            # title=r"Var ~ mean + d*mean^2",
+            xaxis_title="Mean(counts) for genes",
+            yaxis_title="Var(counts) for genes",
+        )
+
+        fig.write_html("i_var_vs_mean_for_genes_log.html")
 
 
         fig = px.scatter(df,
@@ -198,19 +269,33 @@ class Explora:
         y_txt = "Var(counts) for genes"
         fig.update_layout(xaxis_title=x_txt,
                           yaxis_title=y_txt)
-        fig.write_html("i_var_vs_mean_for_genes.html")
+        fig.write_html("i_var_vs_mean_for_genes_px.html")
 
+    def plot_counts_by_gene(self):
+        #Total counts (per cell)
+        fig = px.box(self.A.obs,
+                #y="state",
+                x="total_counts",
+                color="state",
+                log_x=True,
+        )
+        fig.update_layout(xaxis_title="Total counts")
+        txt = "i_box_total_counts_per_cell" + label + ".html"
+        fig.write_html(txt)
                     
 
 
 obj = Explora()
-obj.filter_cells_and_genes()
+obj.replace_treatment_labels()
 obj.find_mitochondrial_genes()
 obj.compute_stats()
+obj.plot_stats(label="_unfiltered")
+obj.filter_cells_and_genes()
 obj.remove_high_mitochondrial_counts()
-obj.remove_high_total_counts()
+obj.remove_high_total_counts_by_state()
 obj.filter_cells_and_genes()
 obj.compute_stats()
-obj.plot_stats()
+obj.plot_stats(label="_filtered")
 obj.partition_into_states()
+obj.plot_counts_by_gene()
 obj.plot_dispersion()
