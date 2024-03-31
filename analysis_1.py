@@ -245,8 +245,6 @@ class Explora:
                 line=dict(color="red"),
                 ))
 
-        fig.update_xaxes(type="log")
-        fig.update_yaxes(type="log")
 
         fig.update_layout(
             # title=r"Var ~ mean + d*mean^2",
@@ -254,33 +252,71 @@ class Explora:
             yaxis_title="Var(counts) for genes",
         )
 
-        fig.write_html("i_var_vs_mean_for_genes_log.html")
+        use_log = True
+
+        if use_log:
+            fig.update_xaxes(type="log")
+            fig.update_yaxes(type="log")
+            fig.write_html("i_var_vs_mean_for_genes_log.html")
+        else:
+            fig.write_html("i_var_vs_mean_for_genes_lin.html")
 
 
         fig = px.scatter(df,
                 x="mean",
                 y="var",
                 color="state",
-                log_x=True,
-                log_y=True,
+                log_x=use_log,
+                log_y=use_log,
                 render_mode="svg",
         )
         x_txt = "Mean(counts) for genes"
         y_txt = "Var(counts) for genes"
         fig.update_layout(xaxis_title=x_txt,
                           yaxis_title=y_txt)
-        fig.write_html("i_var_vs_mean_for_genes_px.html")
+        if use_log:
+            fig.write_html(
+                "i_var_vs_mean_for_genes_px_log.html")
+        else:
+            fig.write_html(
+                "i_var_vs_mean_for_genes_px_lin.html")
 
-    def plot_counts_by_gene(self):
+    def plot_counts_by_gene(self, label=""):
         #Total counts (per cell)
-        fig = px.box(self.A.obs,
+        
+        self.compute_stats(self.C)
+        self.compute_stats(self.T)
+
+
+        df_C = self.C.var.copy()
+        df_T = self.T.var.copy()
+
+        df_C["state"] = "C"
+        df_T["state"] = "T"
+
+        df_C = df_C[["total_counts","state"]].values
+        df_T = df_T[["total_counts","state"]].values
+
+        df = np.concatenate((df_C,df_T),axis=0)
+        df = pd.DataFrame(df,
+                          columns=["total_counts","state"])
+
+
+        df["total_counts"] = df["total_counts"].astype(float)
+        df["total_counts"] += 1
+        df["total_counts"] = np.log10(df["total_counts"])
+
+        fig = px.histogram(df,
                 #y="state",
                 x="total_counts",
                 color="state",
-                log_x=True,
+                #log_x=True,
+                #log_y=True,
+                nbins=50,
         )
-        fig.update_layout(xaxis_title="Total counts")
-        txt = "i_box_total_counts_per_cell" + label + ".html"
+        txt = "log10(Total counts per gene)"
+        fig.update_layout(xaxis_title=txt)
+        txt = "i_hist_total_counts_per_gene" + label + ".html"
         fig.write_html(txt)
                     
 
@@ -298,4 +334,4 @@ obj.compute_stats()
 obj.plot_stats(label="_filtered")
 obj.partition_into_states()
 obj.plot_counts_by_gene()
-obj.plot_dispersion()
+#obj.plot_dispersion()
