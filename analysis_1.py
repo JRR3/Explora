@@ -36,10 +36,16 @@ class Explora:
         self.A.obs["state"] = self.A.obs["state"].apply(fun)
 
     def filter_cells_and_genes(self):
-        sc.pp.filter_cells(self.A, min_counts=200)
+        # sc.pp.filter_cells(self.A, min_counts=200)
         sc.pp.filter_genes(self.A, min_cells=1)
 
     def remove_high_mitochondrial_counts(self):
+        #We remove the mitochondrial counts based on different
+        #groups.
+
+        mask = self.A.obs.pct_counts_mt >= 1
+        print(f"We have {mask.sum()} cells above 1% MT counts.")
+        for
         self.A = self.A[self.A.obs.pct_counts_mt < 1, :]
     
     def compute_stats(self, adata=None):
@@ -64,15 +70,19 @@ class Explora:
         mask_T = ~mask_C
         x = self.A[mask_C].obs["total_counts"]
         q25, q75 = np.percentile(x, [25,75])
+        print(f"Control:[{q25},{q75}]")
         iqr = q75 - q25
         U = 1.5 * iqr
-        mask_C &= self.A.obs.total_counts < U
+        print(f"Control IQR*1.5: {U}")
+        mask_C &= self.A.obs.total_counts < q75 + U
 
         x = self.A[mask_T].obs["total_counts"]
         q25, q75 = np.percentile(x, [25,75])
+        print(f"Treatment:[{q25},{q75}]")
         iqr = q75 - q25
         U = 1.5 * iqr
-        mask_T &= self.A.obs.total_counts < U
+        print(f"Treatment IQR*1.5: {U}")
+        mask_T &= self.A.obs.total_counts < q75 + U
 
         mask = mask_C | mask_T
 
@@ -330,7 +340,7 @@ obj.filter_cells_and_genes()
 obj.remove_high_mitochondrial_counts()
 obj.remove_high_total_counts_by_state()
 obj.filter_cells_and_genes()
-obj.compute_stats()
+# obj.compute_stats()
 obj.plot_stats(label="_filtered")
 obj.partition_into_states()
 obj.plot_counts_by_gene()
