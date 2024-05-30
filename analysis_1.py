@@ -8,6 +8,7 @@ import pandas as pd
 from numpy.polynomial.polynomial import polyval
 from numpy.polynomial.polynomial import Polynomial
 import statsmodels.formula.api as smf
+from toomanycells import TooManyCells as tmc
 # import matplotlib as mpl
 # import matplotlib.pyplot as plt
 # mpl.rcParams["figure.dpi"] = 600
@@ -36,34 +37,55 @@ class Explora:
         self.A.obs["state"] = self.A.obs["state"].apply(fun)
 
     def filter_cells_and_genes(self):
+        print("Filtering cells and genes ...")
         # sc.pp.filter_cells(self.A, min_counts=200)
-        sc.pp.filter_genes(self.A, min_cells=1)
+
+        sc.pp.filter_cells(self.A,
+                           min_counts=50,
+                           inplace=True)
+
+        sc.pp.filter_genes(self.A,
+                           min_cells=1,
+                           inplace=True)
 
     def remove_high_mitochondrial_counts(self):
-        #We remove the mitochondrial counts based on different
-        #groups.
+        # We remove cells whose mitochondrial counts 
+        # exceed the 1 percent of total counts.
+        # Because this is a fixed threshold, there 
+        # is no need to separate by state.
 
         mask = self.A.obs.pct_counts_mt >= 1
-        print(f"We have {mask.sum()} cells above 1% MT counts.")
-        for
+        mito_outliers = mask.sum()
+        txt = (f"We have {mito_outliers} cells "
+               "above 1% MT counts.")
+        print(txt)
+
         self.A = self.A[self.A.obs.pct_counts_mt < 1, :]
     
     def compute_stats(self, adata=None):
+        print("Computing stats ...")
         if adata is None:
-            adata = self.A
-        sc.pp.calculate_qc_metrics(adata,
-                                   qc_vars=["mt"],
-                                   percent_top=None,
-                                   log1p=False,
-                                   inplace=True,
-        )
+            sc.pp.calculate_qc_metrics(self.A,
+                                    qc_vars=["mt"],
+                                    percent_top=None,
+                                    log1p=False,
+                                    inplace=True,
+            )
+        else:
+            sc.pp.calculate_qc_metrics(adata,
+                                    qc_vars=["mt"],
+                                    percent_top=None,
+                                    log1p=False,
+                                    inplace=True,
+            )
 
     def remove_high_total_counts(self):
         x = self.A.obs["total_counts"]
         q25, q75 = np.percentile(x, [25,75])
         iqr = q75 - q25
         U = 1.5 * iqr
-        self.A = self.A[self.A.obs.total_counts < U, :]
+        mask = self.A.obs.total_counts < q75 + U
+        self.A = self.A[mask,:]
 
     def remove_high_total_counts_by_state(self):
         mask_C = self.A.obs.state == "C"
@@ -73,16 +95,20 @@ class Explora:
         print(f"Control:[{q25},{q75}]")
         iqr = q75 - q25
         U = 1.5 * iqr
+        upper_bound = q75 + U
         print(f"Control IQR*1.5: {U}")
-        mask_C &= self.A.obs.total_counts < q75 + U
+        print(f"Control upper bound: {upper_bound}")
+        mask_C &= self.A.obs.total_counts < upper_bound
 
         x = self.A[mask_T].obs["total_counts"]
         q25, q75 = np.percentile(x, [25,75])
         print(f"Treatment:[{q25},{q75}]")
         iqr = q75 - q25
         U = 1.5 * iqr
+        upper_bound = q75 + U
         print(f"Treatment IQR*1.5: {U}")
-        mask_T &= self.A.obs.total_counts < q75 + U
+        print(f"Treatment upper bound: {upper_bound}")
+        mask_T &= self.A.obs.total_counts < upper_bound
 
         mask = mask_C | mask_T
 
@@ -328,6 +354,29 @@ class Explora:
         fig.update_layout(xaxis_title=txt)
         txt = "i_hist_total_counts_per_gene" + label + ".html"
         fig.write_html(txt)
+
+    def toomanycells(self):
+        tmc_obj = tmc(self.A, "tmc_outputs")
+        tmc_obj.run_spectral_clustering()
+        tmc_obj.store_outputs()
+        tmci_dir = "/home/javier/Documents/repos/too-many-cells-interactive"
+        tmc_obj.visualize_with_tmc_interactive(
+            tmci_dir,"state",1234)
+
+    def diapause_signature(self):
+        print(self.T.X)
+        return
+        df = pd.read_csv("diapause_signature.csv",header=0)
+        print(df)
+        print(self.T.var)
+        for gene, weight in zip(df["Gene"], df["Weight"]):
+            if gene not in self.T.var.index:
+                continue
+            col_index = self.T.var.index.get_loc(gene)
+            gene_col = self.T.X.getcol(col_index)
+            if 0 < weight:
+                pass
+
                     
 
 
@@ -338,10 +387,13 @@ obj.compute_stats()
 obj.plot_stats(label="_unfiltered")
 obj.filter_cells_and_genes()
 obj.remove_high_mitochondrial_counts()
+# obj.plot_stats(label="_post_mito")
 obj.remove_high_total_counts_by_state()
 obj.filter_cells_and_genes()
-# obj.compute_stats()
-obj.plot_stats(label="_filtered")
+#obj.compute_stats()
+# obj.plot_stats(label="_filtered")
 obj.partition_into_states()
-obj.plot_counts_by_gene()
+# obj.plot_counts_by_gene(label="_filtered")
 #obj.plot_dispersion()
+obj.diapause_signature()
+# obj.toomanycells()
