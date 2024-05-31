@@ -9,6 +9,9 @@ from numpy.polynomial.polynomial import polyval
 from numpy.polynomial.polynomial import Polynomial
 import statsmodels.formula.api as smf
 from toomanycells import TooManyCells as tmc
+from io import BytesIO
+from scipy.sparse import coo_matrix
+from scipy.io import mmwrite
 # import matplotlib as mpl
 # import matplotlib.pyplot as plt
 # mpl.rcParams["figure.dpi"] = 600
@@ -356,26 +359,66 @@ class Explora:
         fig.write_html(txt)
 
     def toomanycells(self):
-        tmc_obj = tmc(self.A, "tmc_outputs")
+        tmc_obj = tmc(self.T, "treatment_tmc_outputs")
         tmc_obj.run_spectral_clustering()
         tmc_obj.store_outputs()
-        tmci_dir = "/home/javier/Documents/repos/too-many-cells-interactive"
+        tmci_dir = "/Users/javier/Documents/too-many-cells-interactive"
         tmc_obj.visualize_with_tmc_interactive(
             tmci_dir,"state",1234)
 
+    def generate_features_and_barcodes(self):
+        df = self.T.obs.copy()
+        df = df.reset_index()
+        df = df["barcode"]
+        df.to_csv("barcodes.tsv", index=False)
+
     def diapause_signature(self):
-        print(self.T.X)
-        return
+
+        self.compute_stats(self.T)
+        sc.pp.filter_cells(self.T,
+                           min_counts=1,
+                           inplace=True)
+
+        sc.pp.filter_genes(self.T,
+                           min_cells=1,
+                           inplace=True)
+
+        # sc.pp.normalize_total(self.T,
+        #                       target_sum=1,
+        #                       inplace=True)
+
+        vec = self.T.X.getcol(0)
+        vec = np.squeeze(vec.toarray())
+        up_reg = vec * 0
+        down_reg = vec * 0
+        up_count = 0
+        down_count = 0
         df = pd.read_csv("diapause_signature.csv",header=0)
-        print(df)
-        print(self.T.var)
+        # print(df)
+        # print(self.T.var)
         for gene, weight in zip(df["Gene"], df["Weight"]):
             if gene not in self.T.var.index:
                 continue
             col_index = self.T.var.index.get_loc(gene)
             gene_col = self.T.X.getcol(col_index)
+            gene_col = np.squeeze(gene_col.toarray())
             if 0 < weight:
-                pass
+                up_reg += gene_col
+                up_count += 1
+            else:
+                down_reg += gene_col
+                down_count += 1
+        
+        up_reg /= up_count
+        down_reg /= down_count
+        print(up_reg.shape, down_reg.shape)
+        m = np.vstack((up_reg, down_reg))
+        # m = m.T.copy()
+        print(m.shape)
+        # target = BytesIO()
+        target = "/Users/javier/Documents/py_exp/tmc/exploration/treatment_tmc_outputs/treatment_data/matrix.mtx"
+        target = "/Users/javier/Documents/too-many-cells-interactive/treatment_tmc_outputs/treatment_data/matrix.mtx"
+        mmwrite(target, coo_matrix(m), precision=10)
 
                     
 
@@ -395,5 +438,6 @@ obj.filter_cells_and_genes()
 obj.partition_into_states()
 # obj.plot_counts_by_gene(label="_filtered")
 #obj.plot_dispersion()
+# obj.generate_features_and_barcodes()
 obj.diapause_signature()
 # obj.toomanycells()
