@@ -11,7 +11,7 @@ from numpy.polynomial.polynomial import Polynomial
 import statsmodels.formula.api as smf
 from toomanycells import TooManyCells as tmc
 # from io import BytesIO
-from scipy.sparse import coo_matrix
+import scipy.sparse as sp
 from scipy.io import mmwrite
 # import matplotlib as mpl
 # import matplotlib.pyplot as plt
@@ -172,15 +172,18 @@ class Explora:
         fig.write_html(txt)
 
 
+    #=====================================================
     def partition_into_states(self):
         self.C = self.A[self.A.obs.state == "C"].copy()
         self.T = self.A[self.A.obs.state == "T"].copy()
         print(self.C)
         print(self.T)
 
+    #=====================================================
     def get_n_genes(self):
         return self.A.var.shape[0]
 
+    #=====================================================
     def compute_dispersion(self, adata):
         gene_mean=adata.X.mean(axis=0)
         sq = adata.X.copy()
@@ -192,6 +195,7 @@ class Explora:
         mask = 0 < gene_mean
         return (gene_mean[mask], gene_var[mask])
 
+    #=====================================================
     def plot_dispersion(self):
         c_disp = self.compute_dispersion(self.C)
         t_disp = self.compute_dispersion(self.T)
@@ -321,6 +325,7 @@ class Explora:
             fig.write_html(
                 "i_var_vs_mean_for_genes_px_lin.html")
 
+    #=====================================================
     def plot_counts_by_gene(self, label=""):
         #Total counts (per cell)
         
@@ -359,19 +364,98 @@ class Explora:
         txt = "i_hist_total_counts_per_gene" + label + ".html"
         fig.write_html(txt)
 
-    def toomanycells(self):
-        tmc_obj = tmc(self.T, "treatment_tmc_outputs")
 
-        # tmc_obj.run_spectral_clustering()
-        # tmc_obj.store_outputs()
+    #=====================================================
+    def generate_features_and_barcodes(self):
+        df = self.T.obs.copy()
+        df = df.reset_index()
+        df = df["barcode"]
+        df.to_csv("barcodes.tsv", index=False)
 
-        # tmc_obj.create_data_for_tmci(
-        #     list_of_genes = ["Up","Down"],
-        #     create_matrix=False)
+    #====================================================
+    def create_diapause_matrix(self):
+
+        # self.compute_stats(self.T)
+        # sc.pp.filter_cells(self.T,
+        #                    min_counts=1,
+        #                    inplace=True)
+
+        # sc.pp.filter_genes(self.T,
+        #                    min_cells=1,
+        #                    inplace=True)
+
+        Z = sc.pp.scale(self.A, copy=True)
+
+        sc.pp.normalize_total(self.A,
+                              target_sum=1,
+                              inplace=True)
+
+        # if sp.issparse(Z):
+        #     pass
+        # else:
+        #     print("Matrix is dense.")
+        #     Z = sp.csr_matrix(Z)
+        #     print("Done making it sparse.")
+
+        # var_rand_col = np.var(Z.X[:,100])
+        # print(f"{var_rand_col=}")
+
+        vec = np.zeros(Z.X.shape[0])
+        # vec = np.squeeze(vec.toarray())
+        up_reg = vec * 0
+        down_reg = vec * 0
+        up_count = 0
+        down_count = 0
+        df_signature = pd.read_csv(
+            "diapause_signature.csv",header=0)
+        df_meta = pd.read_csv("meta.csv",header=0)
+        df_meta = df_meta.set_index("B")
+        print(df_meta.index)
+        mask = self.A.obs.index.isin(df_meta.index)
+        print(mask.sum())
+        # print(self.A.obs.index)
+        exit()
+        # print(self.T.var)
+        G = df_signature["Gene"]
+        W = df_signature["Weight"]
+        for gene, weight in zip(G, W):
+            if gene not in Z.var.index:
+                continue
+            col_index = Z.var.index.get_loc(gene)
+            # gene_col = Z.X.getcol(col_index)
+            gene_col = Z.X[:,col_index]
+            # gene_col = np.squeeze(gene_col.toarray())
+            if 0 < weight:
+                up_reg += gene_col
+                up_count += 1
+            else:
+                down_reg += gene_col
+                down_count += 1
         
-        # mtx_path = os.path.join(
-        #     tmc_obj.tmci_mtx_dir, "matrix.mtx")
-        # mmwrite(mtx_path, self.tmc_matrix)
+        up_reg /= up_count
+        down_reg /= down_count
+        print(up_reg.shape, down_reg.shape)
+        m = np.vstack((up_reg, down_reg))
+        m = m.astype(np.float32)
+        self.diapause_mtx = sp.coo_matrix(m)
+        # target = BytesIO()
+        # target = "./treatment_data/matrix.mtx"
+        # mmwrite(target, coo_matrix(m))
+
+    #====================================================
+    def create_visualization(self):
+        tmc_obj = tmc(self.A, "treatment_tmc_outputs")
+
+        tmc_obj.run_spectral_clustering()
+        tmc_obj.store_outputs()
+
+        tmc_obj.create_data_for_tmci(
+            list_of_genes = ["UpReg","DownReg"],
+            create_matrix=False)
+        
+        mtx_path = os.path.join(
+            tmc_obj.tmci_mtx_dir, "matrix.mtx")
+        mmwrite(mtx_path, self.diapause_mtx)
 
         #MAC
         # tmci_dir = ("/Users/javier/Documents/"
@@ -395,59 +479,6 @@ class Explora:
             tmci_mtx_dir=mtx_dir,
             )
 
-    def generate_features_and_barcodes(self):
-        df = self.T.obs.copy()
-        df = df.reset_index()
-        df = df["barcode"]
-        df.to_csv("barcodes.tsv", index=False)
-
-    def diapause_signature(self):
-
-        self.compute_stats(self.T)
-        sc.pp.filter_cells(self.T,
-                           min_counts=1,
-                           inplace=True)
-
-        sc.pp.filter_genes(self.T,
-                           min_cells=1,
-                           inplace=True)
-
-        sc.pp.normalize_total(self.T,
-                              target_sum=100,
-                              inplace=True)
-
-        vec = self.T.X.getcol(0)
-        vec = np.squeeze(vec.toarray())
-        up_reg = vec * 0
-        down_reg = vec * 0
-        up_count = 0
-        down_count = 0
-        df = pd.read_csv("diapause_signature.csv",header=0)
-        # print(df)
-        # print(self.T.var)
-        for gene, weight in zip(df["Gene"], df["Weight"]):
-            if gene not in self.T.var.index:
-                continue
-            col_index = self.T.var.index.get_loc(gene)
-            gene_col = self.T.X.getcol(col_index)
-            gene_col = np.squeeze(gene_col.toarray())
-            if 0 < weight:
-                up_reg += gene_col
-                up_count += 1
-            else:
-                down_reg += gene_col
-                down_count += 1
-        
-        up_reg /= up_count
-        down_reg /= down_count
-        print(up_reg.shape, down_reg.shape)
-        m = np.vstack((up_reg, down_reg))
-        m = m.astype(np.float32)
-        self.tmc_matrix = coo_matrix(m)
-        # target = BytesIO()
-        # target = "./treatment_data/matrix.mtx"
-        # mmwrite(target, coo_matrix(m))
-
                     
 
 
@@ -467,5 +498,5 @@ obj.partition_into_states()
 # obj.plot_counts_by_gene(label="_filtered")
 #obj.plot_dispersion()
 # obj.generate_features_and_barcodes()
-obj.diapause_signature()
-obj.toomanycells()
+obj.create_diapause_matrix()
+obj.create_visualization()
