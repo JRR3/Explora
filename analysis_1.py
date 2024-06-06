@@ -7,27 +7,70 @@ import plotly.graph_objects as go
 import numpy as np
 import pandas as pd
 from numpy.polynomial.polynomial import polyval
-from numpy.polynomial.polynomial import Polynomial
-import statsmodels.formula.api as smf
 from toomanycells import TooManyCells as tmc
 # from io import BytesIO
 import scipy.sparse as sp
 from scipy.io import mmwrite
-# import matplotlib as mpl
-# import matplotlib.pyplot as plt
-# mpl.rcParams["figure.dpi"] = 600
-# mpl.use("agg")
+
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+mpl.rcParams["figure.dpi"] = 600
+mpl.use("agg")
 
 class Explora:
+    #====================================================
     def __init__(self):
         #The filtering took place before the h5ad file
         #was created.
-        self.A = sc.read_h5ad("matrix.h5ad")
+        # self.A = sc.read_h5ad("matrix.h5ad")
+        self.source = ("/home/javier/Documents/persister"
+             "/data/experiment_1/"
+             "with_mouse_data/data/human")
 
+        self.fig_out = ("/home/javier/Documents/persister"
+             "/data/experiment_1/"
+             "with_mouse_data/exploration/figures")
+
+        os.makedirs(self.fig_out, exist_ok=True)
+
+    #====================================================
+    def load_mtx_object(self):
+        self.A = sc.read_10x_mtx(self.source)
+        print(self.A)
+
+    #====================================================
+    def load_h5ad_object(self):
+        p = os.path.join(self.source, "matrix.h5ad")
+        self.A = sc.read_h5ad(p)
+        print(self.A)
+
+    #====================================================
+    def convert_mtx_object_to_h5ad(self):
+        p = os.path.join(self.source, "matrix.h5ad")
+        self.A.write_h5ad(p)
+
+    #====================================================
+    def load_metadata(self):
+        p = os.path.join(self.source, "metadata.csv")
+        self.df_meta = pd.read_csv(p, header=0, index_col=0)
+        print(self.df_meta)
+        mask = self.df_meta.index.isin(self.A.obs_names)
+        print("Are all indices in the h5ad object:")
+        if not mask.all():
+            raise ValueError("Mismatch between metadata.")
+
+        self.df_meta = self.df_meta.loc[self.A.obs_names]
+
+        self.A.obs["state"] = self.df_meta["type"]
+        self.A.obs["metaDiapause"] = self.df_meta["DTP.score"]
+
+
+    #====================================================
     def find_mitochondrial_genes(self):
         self.A.var["mt"] = self.A.var_names.str.startswith(
             "MT-")
 
+    #====================================================
     def replace_treatment_labels(self):
 
         def fun(txt):
@@ -40,6 +83,7 @@ class Explora:
 
         self.A.obs["state"] = self.A.obs["state"].apply(fun)
 
+    #====================================================
     def filter_cells_and_genes(self):
         print("Filtering cells and genes ...")
         # sc.pp.filter_cells(self.A, min_counts=200)
@@ -52,6 +96,7 @@ class Explora:
                            min_cells=1,
                            inplace=True)
 
+    #====================================================
     def remove_high_mitochondrial_counts(self):
         # We remove cells whose mitochondrial counts 
         # exceed the 1 percent of total counts.
@@ -66,6 +111,7 @@ class Explora:
 
         self.A = self.A[self.A.obs.pct_counts_mt < 1, :]
     
+    #====================================================
     def compute_stats(self, adata=None):
         print("Computing stats ...")
         if adata is None:
@@ -83,6 +129,7 @@ class Explora:
                                     inplace=True,
             )
 
+    #====================================================
     def remove_high_total_counts(self):
         x = self.A.obs["total_counts"]
         q25, q75 = np.percentile(x, [25,75])
@@ -91,6 +138,7 @@ class Explora:
         mask = self.A.obs.total_counts < q75 + U
         self.A = self.A[mask,:]
 
+    #====================================================
     def remove_high_total_counts_by_state(self):
         mask_C = self.A.obs.state == "C"
         mask_T = ~mask_C
@@ -118,6 +166,7 @@ class Explora:
 
         self.A = self.A[mask]
 
+    #====================================================
     def plot_stats(self, label = ""):
 
         #Total counts (per cell)
@@ -384,47 +433,35 @@ class Explora:
         #                    min_cells=1,
         #                    inplace=True)
 
-        Z = sc.pp.scale(self.A, copy=True)
+        self.Z = sc.pp.scale(self.A, copy=True)
 
         sc.pp.normalize_total(self.A,
-                              target_sum=1,
+                              target_sum=100,
                               inplace=True)
+        sc.pp.log1p(self.A, copy=False)
+        
+        # Z = self.A
 
-        # if sp.issparse(Z):
-        #     pass
-        # else:
-        #     print("Matrix is dense.")
-        #     Z = sp.csr_matrix(Z)
-        #     print("Done making it sparse.")
-
-        # var_rand_col = np.var(Z.X[:,100])
-        # print(f"{var_rand_col=}")
-
-        vec = np.zeros(Z.X.shape[0])
-        # vec = np.squeeze(vec.toarray())
+        vec = np.zeros(self.Z.X.shape[0])
         up_reg = vec * 0
         down_reg = vec * 0
         up_count = 0
         down_count = 0
         df_signature = pd.read_csv(
             "diapause_signature.csv",header=0)
-        df_meta = pd.read_csv("meta.csv",header=0)
-        df_meta = df_meta.set_index("B")
-        print(df_meta.index)
-        mask = self.A.obs.index.isin(df_meta.index)
-        print(mask.sum())
-        # print(self.A.obs.index)
-        exit()
         # print(self.T.var)
         G = df_signature["Gene"]
         W = df_signature["Weight"]
         for gene, weight in zip(G, W):
-            if gene not in Z.var.index:
+            if gene not in self.Z.var.index:
                 continue
-            col_index = Z.var.index.get_loc(gene)
-            # gene_col = Z.X.getcol(col_index)
-            gene_col = Z.X[:,col_index]
-            # gene_col = np.squeeze(gene_col.toarray())
+            col_index = self.Z.var.index.get_loc(gene)
+            if sp.issparse(self.Z.X):
+                gene_col = self.Z.X.getcol(col_index)
+                gene_col = np.squeeze(gene_col.toarray())
+            else:
+                gene_col = self.Z.X[:,col_index]
+
             if 0 < weight:
                 up_reg += gene_col
                 up_count += 1
@@ -432,12 +469,61 @@ class Explora:
                 down_reg += gene_col
                 down_count += 1
         
-        up_reg /= up_count
-        down_reg /= down_count
-        print(up_reg.shape, down_reg.shape)
-        m = np.vstack((up_reg, down_reg))
+        total_counts = up_count + down_count
+
+        chrDiap = 1 * up_reg - 1 * down_reg
+        chrDiap /= total_counts
+
+        up_factor = down_count / total_counts
+        down_factor = up_count / total_counts
+
+        modified_total_counts = 2 * up_count * down_count
+        modified_total_counts /= total_counts
+        
+        check = up_factor*up_count + down_factor*down_count
+
+        print(f"{up_count=}")
+        print(f"{down_count=}")
+        print(f"{total_counts=}")
+        print(f"{modified_total_counts=}")
+        print(f"{check=}")
+        print(f"{up_factor=}")
+        print(f"{down_factor=}")
+
+        up_reg_mean   = up_reg / up_count
+        down_reg_mean = down_reg / down_count
+
+        wDiap = up_factor * up_reg - down_factor * down_reg
+        wDiap /= modified_total_counts
+
+        # print(wDiap)
+
+
+        metDiap = self.A.obs["metaDiapause"]
+
+        m = np.vstack((up_reg_mean,
+                       down_reg_mean,
+                       -down_reg_mean,
+                       metDiap,
+                       chrDiap,
+                       wDiap))
+
+        self.A.obs["wDiapause"] = wDiap
+        self.Z.obs["wDiapause"] = wDiap
+
+        self.A.obs["UpReg"] = up_reg_mean
+        self.Z.obs["UpReg"] = up_reg_mean
+
+        self.A.obs["DownReg"] = -down_reg_mean
+        self.Z.obs["DownReg"] = -down_reg_mean
+
+        print(self.A.obs["UpReg"].describe())
+        print(self.A.obs["DownReg"].describe())
+
         m = m.astype(np.float32)
+
         self.diapause_mtx = sp.coo_matrix(m)
+
         # target = BytesIO()
         # target = "./treatment_data/matrix.mtx"
         # mmwrite(target, coo_matrix(m))
@@ -450,7 +536,13 @@ class Explora:
         tmc_obj.store_outputs()
 
         tmc_obj.create_data_for_tmci(
-            list_of_genes = ["UpReg","DownReg"],
+            list_of_genes = ["UpReg",
+                             "DownReg",
+                             "negDownReg",
+                             "metaDiapause",
+                             "chrDiapause",
+                             "wDiapause",
+                             ],
             create_matrix=False)
         
         mtx_path = os.path.join(
@@ -479,24 +571,96 @@ class Explora:
             tmci_mtx_dir=mtx_dir,
             )
 
+    #====================================================
+    def compute_pca(self, obj, label):
+        fig, ax = plt.subplots()
+        sc.tl.pca(obj)
+
+        colors=["state", "UpReg", "DownReg", "wDiapause"]
+        ftype = ".png"
+
+        for c in colors:
+            fig, ax = plt.subplots()
+            sc.pl.pca(obj,
+                      color=[c],
+                      ax = ax,
+                      show=False)
+
+            fname = label
+            fname += "_"
+            fname += c
+            fname += ftype
+            fname = os.path.join(self.fig_out, fname)
+            fig.savefig(fname, bbox_inches="tight")
+
+    #====================================================
+    def pca_step(self):
+        self.compute_pca(self.A, "pca_ct_norm")
+        self.compute_pca(self.Z, "pca_z_norm")
+
+    #====================================================
+    def compute_diff_map(self, obj, label):
+        sc.pp.neighbors(obj,
+                        n_neighbors=10,
+                        use_rep="X",
+                        method="gauss",
+                        metric="euclidean",
+                        )
+        sc.tl.diffmap(obj, n_comps=5)
+        obj.obsm["X_diffmap_"] = obj.obsm["X_diffmap"][:, 1:]
+
+        colors=["state", "UpReg", "DownReg", "wDiapause"]
+        ftype = ".png"
+        for c in colors:
+            fig, ax = plt.subplots()
+            sc.pl.embedding(obj,
+                            "diffmap_",
+                            color=[c],
+                            ax = ax,
+                            show=False)
+
+            fname = label
+            fname += "_"
+            fname += c
+            fname += ftype
+            fname = os.path.join(self.fig_out, fname)
+            fig.savefig(fname, bbox_inches="tight")
+
+
+    #====================================================
+    def diff_map_step(self):
+        self.compute_diff_map(self.A, "diff_ct_norm")
+        self.compute_diff_map(self.Z, "diff_z_norm")
+
                     
 
 
 obj = Explora()
+# obj.load_mtx_object()
+# obj.convert_mtx_object_to_h5ad()
+obj.load_h5ad_object()
+obj.load_metadata()
 obj.replace_treatment_labels()
 obj.find_mitochondrial_genes()
 obj.compute_stats()
 obj.plot_stats(label="_unfiltered")
 obj.filter_cells_and_genes()
 obj.remove_high_mitochondrial_counts()
-# obj.plot_stats(label="_post_mito")
+
+obj.plot_stats(label="_post_mito")
+
 obj.remove_high_total_counts_by_state()
 obj.filter_cells_and_genes()
-#obj.compute_stats()
-# obj.plot_stats(label="_filtered")
+
+obj.compute_stats()
+obj.plot_stats(label="_filtered")
+
 obj.partition_into_states()
+
 # obj.plot_counts_by_gene(label="_filtered")
 #obj.plot_dispersion()
-# obj.generate_features_and_barcodes()
+
 obj.create_diapause_matrix()
-obj.create_visualization()
+obj.pca_step()
+obj.diff_map_step()
+# obj.create_visualization()
