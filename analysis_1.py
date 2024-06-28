@@ -433,15 +433,19 @@ class Explora:
         #                    min_cells=1,
         #                    inplace=True)
 
-        self.Z = sc.pp.scale(self.A, copy=True)
+        #Prepare Z
+        self.Z = self.A.copy()
+        sc.pp.normalize_total(self.Z,
+                              target_sum=10000,
+                              inplace=False)
+        sc.pp.scale(self.Z, copy=False)
 
+        #Prepare A
         sc.pp.normalize_total(self.A,
                               target_sum=100,
                               inplace=True)
         sc.pp.log1p(self.A, copy=False)
         
-        # Z = self.A
-
         vec = np.zeros(self.Z.X.shape[0])
         up_reg = vec * 0
         down_reg = vec * 0
@@ -632,7 +636,48 @@ class Explora:
         self.compute_diff_map(self.A, "diff_ct_norm")
         self.compute_diff_map(self.Z, "diff_z_norm")
 
+    #====================================================
+    def full_tmc(self):
+        #Prepare Z
+        self.Z = self.A.copy()
+        sc.pp.normalize_total(self.Z,
+                              target_sum=100,
+                              inplace=False)
+        sc.pp.scale(self.Z, copy=False)
+
+        #Prepare A
+        sc.pp.normalize_total(self.A,
+                              target_sum=100,
+                              inplace=True)
+        sc.pp.log1p(self.A, copy=False)
+
+        tmc_obj = tmc(self.A, "treatment_tmc_outputs")
+        tmc_obj.run_spectral_clustering()
+        tmc_obj.store_outputs()
+
+        tmc_obj = tmc(self.Z, "treatment_tmc_outputs")
+        fname = "diapause_signature.csv"
+        fname = os.path.join(".", fname)
+        tmc_obj.generate_matrix_from_signature_file(fname)
+
                     
+    #====================================================
+    def tmc_int(self):
+        tmci_dir = ("/home/javier/Documents/"
+                   "repos/too-many-cells-interactive")
+        mtx_dir = ("/home/javier/Documents/persister"
+                   "/data/experiment_1/with_mouse_data"
+                   "/exploration/treatment_tmc_outputs"
+                   "/tmci_mtx_data")
+
+        tmc_obj = tmc(self.A, "treatment_tmc_outputs")
+        tmc_obj.visualize_with_tmc_interactive(
+            tmci_dir,
+            "state",
+            2234,
+            include_matrix_data = True,
+            tmci_mtx_dir=mtx_dir,
+            )
 
 
 obj = Explora()
@@ -660,7 +705,10 @@ obj.partition_into_states()
 # obj.plot_counts_by_gene(label="_filtered")
 #obj.plot_dispersion()
 
-obj.create_diapause_matrix()
-obj.pca_step()
-obj.diff_map_step()
+# obj.create_diapause_matrix()
+# obj.pca_step()
+# obj.diff_map_step()
 # obj.create_visualization()
+
+obj.full_tmc()
+obj.tmc_int()
